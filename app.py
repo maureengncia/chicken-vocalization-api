@@ -19,7 +19,7 @@ app = Flask(__name__)
 CORS(app)  # Allow cross-origin requests dari Android
 
 # Konfigurasi upload
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = '/tmp/uploads'  # Gunakan /tmp untuk Railway
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'flac', 'm4a'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
 
@@ -66,9 +66,12 @@ class ChickenVocalizationAPI:
         try:
             logger.info("Loading model dan normalisasi...")
             
-            # Load model
-            self.model = tf.keras.models.load_model(self.model_path)
+            # Load model dengan memory optimization
+            self.model = tf.keras.models.load_model(self.model_path, compile=False)
             logger.info(f"✅ Model loaded: {self.model_path}")
+            
+            # Optimize memory
+            tf.keras.backend.clear_session()
             
             # Load normalization data
             self.norm_data = np.load(self.norm_path)
@@ -78,6 +81,7 @@ class ChickenVocalizationAPI:
             
         except Exception as e:
             logger.error(f"❌ Error loading model: {str(e)}")
+            logger.error(traceback.format_exc())
             raise
     
     def extract_mfcc_features(self, audio_path, debug=False):
@@ -86,12 +90,28 @@ class ChickenVocalizationAPI:
         PERSIS seperti training - NO EXTRA PREPROCESSING
         """
         try:
+            # Check if file exists and readable
+            if not os.path.exists(audio_path):
+                logger.error(f"Audio file not found: {audio_path}")
+                return None
+                
+            file_size = os.path.getsize(audio_path)
+            if file_size == 0:
+                logger.error(f"Audio file is empty: {audio_path}")
+                return None
+                
+            logger.info(f"Processing audio file: {audio_path} ({file_size} bytes)")
+            
             # Load audio PERSIS seperti training
             audio, sr = librosa.load(audio_path, sr=self.sample_rate)
             
             if debug:
                 logger.info(f"Audio loaded - Duration: {len(audio)/sr:.2f}s, SR: {sr}, Shape: {audio.shape}")
                 logger.info(f"Audio stats - Min: {audio.min():.6f}, Max: {audio.max():.6f}, Mean: {audio.mean():.6f}")
+            
+            if len(audio) == 0:
+                logger.error("Audio array is empty after loading")
+                return None
             
             # Ekstraksi MFCC features - PERSIS seperti di training
             mfcc = librosa.feature.mfcc(
