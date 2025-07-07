@@ -280,19 +280,25 @@ def internal_error(e):
         'message': 'Internal server error!'
     }), 500
 
+# Load model saat startup (tidak di dalam if __name__ == '__main__')
+logger.info("🚀 Starting Flask API...")
+logger.info(f"TensorFlow version: {tf.__version__}")
+
+# Suppress TensorFlow warnings untuk production
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
+
+if load_model_and_normalization():
+    logger.info("✅ Model dan normalization berhasil dimuat!")
+    logger.info("✅ API siap menerima request!")
+else:
+    logger.error("❌ Gagal memuat model!")
+
 if __name__ == '__main__':
-    # Load model saat startup
-    logger.info("🚀 Starting Flask API...")
-    logger.info(f"TensorFlow version: {tf.__version__}")
-    
-    if load_model_and_normalization():
-        logger.info("✅ API siap digunakan!")
-        
-        # Jalankan Flask app
-        app.run(
-            host='0.0.0.0',  # Untuk deployment
-            port=int(os.environ.get('PORT', 5000)),  # Railway akan set PORT
-            debug=False  # Set False untuk production
-        )
-    else:
-        logger.error("❌ Gagal memuat model. Server tidak dapat dijalankan!")
+    # Jalankan Flask app untuk development
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=False
+    )
