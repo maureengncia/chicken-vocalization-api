@@ -61,19 +61,42 @@ def load_model():
     global model, norm_mean, norm_std
     
     try:
+        print("=== LOADING MODEL ===")
+        
+        # Check files
+        model_file = 'chicken_transformer_model.h5'
+        norm_file = 'chicken_transformer_model_norm.npz'
+        
+        if not os.path.exists(model_file):
+            print(f"❌ Model file not found: {model_file}")
+            print(f"Files in directory: {os.listdir('.')}")
+            return False
+            
+        if not os.path.exists(norm_file):
+            print(f"❌ Norm file not found: {norm_file}")
+            print(f"Files in directory: {os.listdir('.')}")
+            return False
+        
+        print(f"✅ Files found:")
+        print(f"   Model: {model_file} ({os.path.getsize(model_file)/1024/1024:.1f}MB)")
+        print(f"   Norm: {norm_file}")
+        
         print("Loading Transformer model...")
-        model = tf.keras.models.load_model('chicken_transformer_model.h5')
+        model = tf.keras.models.load_model(model_file)
+        print(f"✅ Model loaded! Input shape: {model.input_shape}")
         
         print("Loading normalization...")
-        norm_data = np.load('chicken_transformer_model_norm.npz')
+        norm_data = np.load(norm_file)
         norm_mean = norm_data['mean']
         norm_std = norm_data['std']
+        print(f"✅ Normalization loaded! Mean: {norm_mean:.6f}, Std: {norm_std:.6f}")
         
-        print(f"Model loaded! Mean: {norm_mean:.6f}, Std: {norm_std:.6f}")
         return True
         
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"❌ Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 @app.route('/')
@@ -152,7 +175,9 @@ if __name__ == '__main__':
     
     if load_model():
         print("✅ Model loaded successfully!")
-        app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+        port = int(os.environ.get('PORT', 5000))
+        print(f"🚀 Starting server on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False)
     else:
         print("❌ Failed to load model")
         exit(1)
