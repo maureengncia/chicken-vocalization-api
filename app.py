@@ -1,5 +1,5 @@
 # app.py - Flask API untuk Model Transformer Vokalisasi Ayam
-# Compatible dengan TensorFlow 2.12
+# Compatible dengan kode training Transformer
 
 import os
 import numpy as np
@@ -9,10 +9,29 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import tempfile
 import logging
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Set random seeds untuk reproducibility (sama dengan training)
+def set_random_seeds(seed=42):
+    """Set random seeds untuk hasil yang reproducible"""
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    
+    try:
+        tf.keras.utils.set_random_seed(seed)
+    except AttributeError:
+        pass
+
+set_random_seeds(42)
 
 # Inisialisasi Flask app
 app = Flask(__name__)
@@ -24,20 +43,24 @@ ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac'}
 # Global variables untuk model dan konfigurasi
 model = None
 normalization_values = None
+
+# Label kategori vokalisasi (sama persis dengan training)
 categories = [
     'ayam betina marah',
-    'ayam betina memanggil jantan', 
+    'ayam betina memanggil jantan',
     'ketika ada ancaman',
     'setelah bertelur'
 ]
 
-# Konfigurasi MFCC (sama dengan training)
-MFCC_CONFIG = {
-    'n_mfcc': 20,
-    'hop_length': 512,
-    'n_fft': 1024,
-    'max_length': 250
-}
+# Konfigurasi MFCC (sama persis dengan training code)
+class MFCCConfig:
+    def __init__(self):
+        self.n_mfcc = 20
+        self.hop_length = 512
+        self.n_fft = 1024
+        self.max_length = 250
+
+mfcc_config = MFCCConfig()
 
 def allowed_file(filename):
     """Check apakah file audio yang diupload valid"""
@@ -80,58 +103,64 @@ def load_model_and_normalization():
 
 def extract_mfcc_features(audio_path):
     """
-    Ekstraksi fitur MFCC dari file audio
+    Ekstraksi fitur MFCC dari file audio untuk Transformer
     Sama persis dengan function di training code
     """
     try:
-        # Load audio file
+        # Load audio file dengan sample rate yang konsisten
         audio, sr = librosa.load(audio_path, sr=None)
-        
+
         # Ekstraksi MFCC features
         mfcc = librosa.feature.mfcc(
             y=audio,
             sr=sr,
-            n_mfcc=MFCC_CONFIG['n_mfcc'],
-            hop_length=MFCC_CONFIG['hop_length'],
-            n_fft=MFCC_CONFIG['n_fft']
+            n_mfcc=mfcc_config.n_mfcc,
+            hop_length=mfcc_config.hop_length,
+            n_fft=mfcc_config.n_fft
         )
-        
-        # Padding atau truncate ke panjang yang sama
-        if mfcc.shape[1] < MFCC_CONFIG['max_length']:
-            # Padding dengan zeros
-            pad_width = MFCC_CONFIG['max_length'] - mfcc.shape[1]
+
+        # MFCC shape: (n_mfcc, max_length)
+        # Untuk Transformer, kita butuh bentuk (max_length, n_mfcc) - sequence format
+
+        # Padding atau truncate ke panjang yang sama untuk time frames
+        if mfcc.shape[1] < mfcc_config.max_length:
+            # Padding dengan zeros jika terlalu pendek
+            pad_width = mfcc_config.max_length - mfcc.shape[1]
             mfcc = np.pad(mfcc, ((0, 0), (0, pad_width)), mode='constant')
-        elif mfcc.shape[1] > MFCC_CONFIG['max_length']:
-            # Truncate
-            mfcc = mfcc[:, :MFCC_CONFIG['max_length']]
-        
+        elif mfcc.shape[1] > mfcc_config.max_length:
+            # Truncate jika terlalu panjang
+            mfcc = mfcc[:, :mfcc_config.max_length]
+
         # Transpose untuk Transformer: (max_length, n_mfcc)
-        mfcc = mfcc.T  # Shape: (250, 20)
-        
+        # Ini membuat setiap time frame sebagai satu token dalam sequence
+        mfcc = mfcc.T  # Shape: (max_length, n_mfcc)
+
         return mfcc
-        
+
     except Exception as e:
-        logger.error(f"Error extracting MFCC: {str(e)}")
+        logger.error(f"Error processing audio {audio_path}: {e}")
         return None
 
 def preprocess_audio(audio_path):
     """
     Preprocess audio file untuk prediksi
+    Sama persis dengan pipeline training
     """
     try:
-        # Extract MFCC
+        # Extract MFCC (sama dengan training)
         mfcc_features = extract_mfcc_features(audio_path)
         
         if mfcc_features is None:
             return None
             
-        # Convert ke float32 dan normalize
+        # Convert ke float32 dan normalize (sama dengan training)
         mfcc_features = mfcc_features.astype('float32')
         mfcc_features = (mfcc_features - normalization_values['mean']) / normalization_values['std']
         
-        # Add batch dimension: (1, 250, 20)
+        # Add batch dimension: (1, 250, 20) untuk Transformer
         mfcc_features = np.expand_dims(mfcc_features, axis=0)
         
+        logger.info(f"Preprocessed shape: {mfcc_features.shape}")
         return mfcc_features
         
     except Exception as e:
@@ -143,10 +172,17 @@ def home():
     """Endpoint untuk testing API"""
     return jsonify({
         'status': 'success',
-        'message': 'Flask API untuk Klasifikasi Vokalisasi Ayam',
+        'message': 'Flask API untuk Klasifikasi Vokalisasi Ayam - Transformer Model',
         'model_loaded': model is not None,
         'categories': categories,
-        'tensorflow_version': tf.__version__
+        'mfcc_config': {
+            'n_mfcc': mfcc_config.n_mfcc,
+            'hop_length': mfcc_config.hop_length,
+            'n_fft': mfcc_config.n_fft,
+            'max_length': mfcc_config.max_length
+        },
+        'tensorflow_version': tf.__version__,
+        'normalization_loaded': normalization_values is not None
     })
 
 @app.route('/predict', methods=['POST'])
@@ -159,14 +195,20 @@ def predict():
         if model is None:
             return jsonify({
                 'status': 'error',
-                'message': 'Model belum dimuat!'
+                'message': 'Model Transformer belum dimuat!'
+            }), 500
+            
+        if normalization_values is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'Normalization values belum dimuat!'
             }), 500
             
         # Check apakah ada file yang diupload
         if 'audio' not in request.files:
             return jsonify({
                 'status': 'error', 
-                'message': 'Tidak ada file audio yang diupload!'
+                'message': 'Tidak ada file audio yang diupload! Gunakan field "audio".'
             }), 400
             
         file = request.files['audio']
@@ -184,24 +226,26 @@ def predict():
                 'message': f'Format file tidak didukung! Gunakan: {", ".join(ALLOWED_EXTENSIONS)}'
             }), 400
             
+        logger.info(f"Processing file: {file.filename}")
+        
         # Save file temporary
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
             file.save(temp_file.name)
             temp_path = temp_file.name
             
         try:
-            # Preprocess audio
-            logger.info("Preprocessing audio...")
+            # Preprocess audio (sama dengan training pipeline)
+            logger.info("Extracting MFCC features...")
             features = preprocess_audio(temp_path)
             
             if features is None:
                 return jsonify({
                     'status': 'error',
-                    'message': 'Gagal memproses file audio!'
+                    'message': 'Gagal memproses file audio! Pastikan file audio valid.'
                 }), 400
                 
-            # Prediksi dengan model
-            logger.info("Melakukan prediksi...")
+            # Prediksi dengan model Transformer
+            logger.info("Predicting with Transformer model...")
             predictions = model.predict(features, verbose=0)
             
             # Get hasil prediksi
@@ -209,28 +253,38 @@ def predict():
             predicted_class = categories[predicted_class_idx]
             confidence = float(predictions[0][predicted_class_idx])
             
-            # Get top 3 predictions
-            top_3_idx = np.argsort(predictions[0])[-3:][::-1]
-            top_3_predictions = []
-            
-            for idx in top_3_idx:
-                top_3_predictions.append({
+            # Get all predictions dengan confidence score
+            all_predictions = []
+            for idx, prob in enumerate(predictions[0]):
+                all_predictions.append({
                     'class': categories[idx],
-                    'confidence': float(predictions[0][idx])
+                    'confidence': float(prob)
                 })
             
-            logger.info(f"Prediksi berhasil: {predicted_class} ({confidence:.4f})")
+            # Sort by confidence (descending)
+            all_predictions.sort(key=lambda x: x['confidence'], reverse=True)
             
-            # Response
+            logger.info(f"Prediction successful: {predicted_class} (confidence: {confidence:.4f})")
+            
+            # Response lengkap
             response = {
                 'status': 'success',
                 'prediction': {
                     'class': predicted_class,
-                    'confidence': confidence
+                    'confidence': confidence,
+                    'class_index': int(predicted_class_idx)
                 },
-                'top_3_predictions': top_3_predictions,
-                'mfcc_shape': features.shape,
-                'message': 'Prediksi berhasil!'
+                'all_predictions': all_predictions,
+                'audio_info': {
+                    'filename': file.filename,
+                    'mfcc_shape': list(features.shape),
+                    'preprocessing': 'MFCC -> Normalize -> Transformer'
+                },
+                'model_info': {
+                    'type': 'Transformer',
+                    'categories': categories,
+                    'tensorflow_version': tf.__version__
+                }
             }
             
             return jsonify(response)
@@ -280,25 +334,19 @@ def internal_error(e):
         'message': 'Internal server error!'
     }), 500
 
-# Load model saat startup (tidak di dalam if __name__ == '__main__')
-logger.info("🚀 Starting Flask API...")
-logger.info(f"TensorFlow version: {tf.__version__}")
-
-# Suppress TensorFlow warnings untuk production
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
-
-if load_model_and_normalization():
-    logger.info("✅ Model dan normalization berhasil dimuat!")
-    logger.info("✅ API siap menerima request!")
-else:
-    logger.error("❌ Gagal memuat model!")
-
 if __name__ == '__main__':
-    # Jalankan Flask app untuk development
-    app.run(
-        host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5000)),
-        debug=False
-    )
+    # Load model saat startup
+    logger.info("🚀 Starting Flask API...")
+    logger.info(f"TensorFlow version: {tf.__version__}")
+    
+    if load_model_and_normalization():
+        logger.info("✅ API siap digunakan!")
+        
+        # Jalankan Flask app
+        app.run(
+            host='0.0.0.0',  # Untuk deployment
+            port=int(os.environ.get('PORT', 5000)),  # Railway akan set PORT
+            debug=False  # Set False untuk production
+        )
+    else:
+        logger.error("❌ Gagal memuat model. Server tidak dapat dijalankan!")
