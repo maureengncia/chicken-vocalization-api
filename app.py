@@ -28,10 +28,62 @@ categories = [
     'setelah bertelur'
 ]
 
-def extract_mfcc_features(audio_path):
-    """Extract MFCC features - SAMA dengan training"""
+def normalize_audio_amplitude(audio_path):
+    """Normalize amplitude audio untuk match dengan training data"""
     try:
         audio, sr = librosa.load(audio_path, sr=None)
+        
+        # Hitung max amplitude current
+        current_max = np.max(np.abs(audio))
+        
+        if current_max > 0:
+            # Target amplitude (80% of max untuk prevent clipping)
+            target_amplitude = 0.8
+            
+            # Hitung amplification factor
+            amplification_factor = target_amplitude / current_max
+            
+            # Limit amplification (jangan terlalu ekstrim)
+            if amplification_factor > 5.0:
+                amplification_factor = 5.0
+            if amplification_factor < 0.5:
+                amplification_factor = 0.5
+            
+            # Apply amplification
+            audio_normalized = audio * amplification_factor
+            
+            print(f"🔧 Audio normalized:")
+            print(f"   Original max: {current_max:.6f}")
+            print(f"   Amplification: {amplification_factor:.2f}x")
+            print(f"   New max: {np.max(np.abs(audio_normalized)):.6f}")
+            
+            # Save normalized audio (optional - untuk debugging)
+            # librosa.output.write_wav('normalized_audio.wav', audio_normalized, sr)
+            
+            return audio_normalized, sr
+        else:
+            print("⚠️  Audio is silent, returning original")
+            return audio, sr
+            
+    except Exception as e:
+        print(f"❌ Error normalizing audio: {e}")
+        return None, None
+
+def extract_mfcc_features(audio_path):
+    """Extract MFCC features dengan audio normalization"""
+    try:
+        # ✅ NORMALIZATION DULU sebelum MFCC
+        audio, sr = normalize_audio_amplitude(audio_path)
+        
+        if audio is None:
+            return None
+        
+        # Enhanced preprocessing untuk suara keras
+        original_max = np.max(np.abs(audio))
+        print(f"🎵 Processing normalized audio (max: {original_max:.6f})")
+        
+        # Pre-emphasis untuk meningkatkan frekuensi tinggi
+        audio = librosa.effects.preemphasis(audio)
         
         mfcc = librosa.feature.mfcc(
             y=audio,
@@ -41,19 +93,27 @@ def extract_mfcc_features(audio_path):
             n_fft=N_FFT
         )
         
+        print(f"🎼 MFCC extracted: {mfcc.shape}")
+        print(f"   MFCC mean: {np.mean(mfcc):.4f}")
+        print(f"   MFCC std: {np.std(mfcc):.4f}")
+        
         # Padding/truncate
         if mfcc.shape[1] < MAX_LENGTH:
             pad_width = MAX_LENGTH - mfcc.shape[1]
             mfcc = np.pad(mfcc, ((0, 0), (0, pad_width)), mode='constant')
+            print(f"🔧 MFCC padded: +{pad_width} frames")
         elif mfcc.shape[1] > MAX_LENGTH:
             mfcc = mfcc[:, :MAX_LENGTH]
+            print(f"🔧 MFCC truncated to {MAX_LENGTH} frames")
         
         # Transpose untuk Transformer: (250, 20)
         mfcc = mfcc.T
+        print(f"✅ Final MFCC shape: {mfcc.shape}")
+        
         return mfcc
         
     except Exception as e:
-        print(f"Error extracting MFCC: {e}")
+        print(f"❌ Error extracting MFCC: {e}")
         return None
 
 def load_model():
