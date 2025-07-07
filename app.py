@@ -93,14 +93,32 @@ def load_model_and_normalization():
     global model, norm_mean, norm_std
     
     try:
-        # Load model
+        print("=== LOADING MODEL ON RAILWAY ===")
+        
+        # Check if files exist
+        model_path = 'chicken_transformer_model.h5'
+        norm_path = 'chicken_transformer_model_norm.npz'
+        
+        if not os.path.exists(model_path):
+            print(f"❌ Model file not found: {model_path}")
+            return False
+        
+        if not os.path.exists(norm_path):
+            print(f"❌ Normalization file not found: {norm_path}")
+            return False
+        
+        print(f"✅ Files found - Model: {os.path.getsize(model_path)/1024/1024:.1f}MB")
+        
+        # Load model dengan error handling lebih detail
         print("Loading Transformer model...")
-        model = tf.keras.models.load_model('chicken_transformer_model.h5')
+        model = tf.keras.models.load_model(model_path)
         print("✅ Model loaded successfully!")
+        print(f"Model input shape: {model.input_shape}")
+        print(f"Model output shape: {model.output_shape}")
         
         # Load normalization values
         print("Loading normalization values...")
-        norm_data = np.load('chicken_transformer_model_norm.npz')
+        norm_data = np.load(norm_path)
         norm_mean = norm_data['mean']
         norm_std = norm_data['std']
         print(f"✅ Normalization loaded - Mean: {norm_mean:.6f}, Std: {norm_std:.6f}")
@@ -109,6 +127,8 @@ def load_model_and_normalization():
         
     except Exception as e:
         print(f"❌ Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 @app.route('/', methods=['GET'])
@@ -117,10 +137,11 @@ def home():
     Endpoint untuk testing server
     """
     return jsonify({
-        'status': 'success',
+        'success': True,
         'message': 'Chicken Vocalization Transformer API is running!',
         'model_loaded': model is not None,
-        'categories': categories
+        'categories': categories,
+        'version': 'transformer_v1.0'
     })
 
 @app.route('/predict', methods=['POST'])
@@ -134,15 +155,15 @@ def predict():
         # Check if model is loaded
         if model is None:
             return jsonify({
-                'status': 'error',
-                'message': 'Model not loaded'
+                'success': False,
+                'error': 'Model not loaded'
             }), 500
         
         # Check if file is in request
         if 'audio' not in request.files:
             return jsonify({
-                'status': 'error',
-                'message': 'No audio file in request'
+                'success': False,
+                'error': 'No audio file in request'
             }), 400
         
         file = request.files['audio']
@@ -150,15 +171,15 @@ def predict():
         # Check if file is selected
         if file.filename == '':
             return jsonify({
-                'status': 'error',
-                'message': 'No file selected'
+                'success': False,
+                'error': 'No file selected'
             }), 400
         
         # Check file extension
         if not allowed_file(file.filename):
             return jsonify({
-                'status': 'error',
-                'message': f'File type not allowed. Use: {", ".join(ALLOWED_EXTENSIONS)}'
+                'success': False,
+                'error': f'File type not allowed. Use: {", ".join(ALLOWED_EXTENSIONS)}'
             }), 400
         
         # Save file temporarily
@@ -176,8 +197,8 @@ def predict():
             os.remove(temp_path)
             os.rmdir(temp_dir)
             return jsonify({
-                'status': 'error',
-                'message': 'Failed to extract MFCC features'
+                'success': False,
+                'error': 'Failed to extract MFCC features'
             }), 400
         
         # Preprocess untuk prediksi
@@ -188,8 +209,8 @@ def predict():
             os.remove(temp_path)
             os.rmdir(temp_dir)
             return jsonify({
-                'status': 'error',
-                'message': 'Failed to preprocess audio'
+                'success': False,
+                'error': 'Failed to preprocess audio'
             }), 400
         
         # Prediksi dengan model Transformer
@@ -219,15 +240,15 @@ def predict():
         # Calculate processing time
         processing_time = time.time() - start_time
         
-        # Return hasil
+        # Return hasil dalam format yang sesuai dengan Android
         return jsonify({
-            'status': 'success',
+            'success': True,
+            'filename': filename,
             'prediction': {
-                'class': predicted_label,
+                'predicted_class': predicted_label,
                 'confidence': confidence,
-                'class_index': int(predicted_class)
+                'all_predictions': {categories[i]: float(predictions[0][i]) for i in range(len(categories))}
             },
-            'all_predictions': all_predictions,
             'processing_time': round(processing_time, 3),
             'audio_info': {
                 'filename': filename,
@@ -237,9 +258,14 @@ def predict():
         
     except Exception as e:
         print(f"Error in prediction: {e}")
+        # Import traceback untuk debug
+        import traceback
+        traceback.print_exc()
+        
         return jsonify({
-            'status': 'error',
-            'message': f'Prediction failed: {str(e)}'
+            'success': False,
+            'error': f'Prediction failed: {str(e)}',
+            'message': 'Server internal error'
         }), 500
 
 @app.route('/health', methods=['GET'])
@@ -248,7 +274,8 @@ def health_check():
     Health check endpoint
     """
     return jsonify({
-        'status': 'healthy',
+        'success': True,
+        'healthy': True,
         'model_loaded': model is not None,
         'tensorflow_version': tf.__version__
     })
