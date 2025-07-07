@@ -170,14 +170,15 @@ def predict():
             'error': str(e)
         }), 500
 
+# Load model saat startup (untuk gunicorn)
+print("🐔 Starting Chicken Transformer API...")
+if not load_model():
+    print("❌ Failed to load model")
+    exit(1)
+else:
+    print("✅ Model loaded successfully!")
+
 if __name__ == '__main__':
-    print("🐔 Starting Chicken Transformer API...")
-    
-    if load_model():
-        print("✅ Model loaded successfully!")
-        port = int(os.environ.get('PORT', 5000))
-        print(f"🚀 Starting server on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False)
-    else:
-        print("❌ Failed to load model")
-        exit(1)
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
