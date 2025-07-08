@@ -5,8 +5,6 @@ import tensorflow as tf
 from werkzeug.utils import secure_filename
 import tempfile
 import os
-import warnings
-warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -30,92 +28,33 @@ categories = [
     'setelah bertelur'
 ]
 
-def preprocess_audio_for_consistency(audio_path):
-    """
-    Enhanced audio preprocessing untuk consistency dengan training data
-    """
+def extract_mfcc_features(audio_path):
+    """Extract MFCC features - SAMA dengan training"""
     try:
-        print(f"Processing audio: {audio_path}")
+        audio, sr = librosa.load(audio_path, sr=None)
         
-        # Load audio dengan librosa (sama dengan training)
-        audio, original_sr = librosa.load(audio_path, sr=None)
-        print(f"Original: SR={original_sr}, Duration={len(audio)/original_sr:.2f}s, Shape={audio.shape}")
-        
-        # === AUDIO QUALITY IMPROVEMENTS ===
-        
-        # 1. Convert ke mono jika stereo
-        if len(audio.shape) > 1:
-            audio = librosa.to_mono(audio)
-            print("✅ Converted stereo to mono")
-        
-        # 2. Resample ke sample rate standar (gunakan 22050 Hz yang umum untuk speech)
-        target_sr = 22050
-        if original_sr != target_sr:
-            audio = librosa.resample(audio, orig_sr=original_sr, target_sr=target_sr)
-            print(f"✅ Resampled {original_sr}Hz -> {target_sr}Hz")
-        else:
-            target_sr = original_sr
-        
-        # 3. Normalisasi amplitude (prevent clipping)
-        audio = audio / np.max(np.abs(audio))
-        print("✅ Normalized amplitude")
-        
-        # 4. Noise reduction sederhana (trim silence)
-        audio, _ = librosa.effects.trim(audio, top_db=20)
-        print(f"✅ Trimmed silence, new duration: {len(audio)/target_sr:.2f}s")
-        
-        # 5. Filter noise dengan spectral gating sederhana
-        # Hitung noise floor
-        noise_floor = np.percentile(np.abs(audio), 10)
-        # Soft gating (jangan terlalu aggressive)
-        audio = np.where(np.abs(audio) < noise_floor * 0.5, audio * 0.1, audio)
-        print("✅ Applied noise reduction")
-        
-        # 6. Ensure minimum duration (jika terlalu pendek, repeat)
-        min_duration = 1.0  # seconds
-        min_samples = int(min_duration * target_sr)
-        if len(audio) < min_samples:
-            # Repeat audio until minimum duration
-            repeats = int(np.ceil(min_samples / len(audio)))
-            audio = np.tile(audio, repeats)[:min_samples]
-            print(f"✅ Extended short audio to {min_duration}s")
-        
-        # === MFCC EXTRACTION (sama dengan training) ===
         mfcc = librosa.feature.mfcc(
             y=audio,
-            sr=target_sr,
+            sr=sr,
             n_mfcc=N_MFCC,
             hop_length=HOP_LENGTH,
-            n_fft=N_FFT,
-            window='hann',  # Explicitly set window
-            center=True,    # Center frames
-            power=2.0       # Use power spectrum
+            n_fft=N_FFT
         )
         
-        print(f"MFCC shape before padding: {mfcc.shape}")
-        
-        # Padding/truncate (sama dengan training)
+        # Padding/truncate
         if mfcc.shape[1] < MAX_LENGTH:
             pad_width = MAX_LENGTH - mfcc.shape[1]
-            mfcc = np.pad(mfcc, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
+            mfcc = np.pad(mfcc, ((0, 0), (0, pad_width)), mode='constant')
         elif mfcc.shape[1] > MAX_LENGTH:
             mfcc = mfcc[:, :MAX_LENGTH]
         
         # Transpose untuk Transformer: (250, 20)
         mfcc = mfcc.T
-        print(f"Final MFCC shape: {mfcc.shape}")
-        
         return mfcc
         
     except Exception as e:
-        print(f"Error in audio preprocessing: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error extracting MFCC: {e}")
         return None
-
-def extract_mfcc_features(audio_path):
-    """Extract MFCC features dengan enhanced preprocessing"""
-    return preprocess_audio_for_consistency(audio_path)
 
 def load_model():
     """Load model dan normalization"""
@@ -164,14 +103,8 @@ def load_model():
 def home():
     return jsonify({
         'success': True,
-        'message': 'Chicken Transformer API Running - Enhanced Audio Processing',
-        'model_loaded': model is not None,
-        'audio_preprocessing': {
-            'noise_reduction': True,
-            'amplitude_normalization': True,
-            'sample_rate_standardization': True,
-            'silence_trimming': True
-        }
+        'message': 'Chicken Transformer API Running',
+        'model_loaded': model is not None
     })
 
 @app.route('/predict', methods=['POST'])
@@ -187,19 +120,13 @@ def predict():
         if file.filename == '':
             return jsonify({'success': False, 'error': 'No file selected'}), 400
         
-        print(f"\n=== PROCESSING REQUEST ===")
-        print(f"File: {file.filename}")
-        
         # Save temporary file
         filename = secure_filename(file.filename)
         temp_dir = tempfile.mkdtemp()
         temp_path = os.path.join(temp_dir, filename)
         file.save(temp_path)
         
-        print(f"Saved to: {temp_path}")
-        print(f"File size: {os.path.getsize(temp_path)} bytes")
-        
-        # Extract MFCC dengan enhanced preprocessing
+        # Extract MFCC
         mfcc_features = extract_mfcc_features(temp_path)
         
         if mfcc_features is None:
@@ -207,33 +134,23 @@ def predict():
             os.rmdir(temp_dir)
             return jsonify({'success': False, 'error': 'MFCC extraction failed'}), 400
         
-        # Preprocess untuk model (sama dengan training)
+        # Preprocess
         mfcc_batch = np.expand_dims(mfcc_features, axis=0)
         mfcc_normalized = (mfcc_batch - norm_mean) / norm_std
         mfcc_normalized = mfcc_normalized.astype('float32')
         
-        print(f"Input to model: {mfcc_normalized.shape}")
-        
         # Predict
-        print("Running prediction...")
         predictions = model.predict(mfcc_normalized, verbose=0)
         
         predicted_class = np.argmax(predictions[0])
         confidence = float(predictions[0][predicted_class])
         predicted_label = categories[predicted_class]
         
-        print(f"Prediction: {predicted_label} (confidence: {confidence:.4f})")
-        
-        # Show all predictions untuk debugging
-        print("All predictions:")
-        for i, cat in enumerate(categories):
-            print(f"  {cat}: {predictions[0][i]:.4f}")
-        
         # Cleanup
         os.remove(temp_path)
         os.rmdir(temp_dir)
         
-        # Return result dengan info tambahan
+        # Return result - FORMAT SESUAI ANDROID
         return jsonify({
             'success': True,
             'filename': filename,
@@ -243,46 +160,18 @@ def predict():
                 'all_predictions': {
                     categories[i]: float(predictions[0][i]) for i in range(len(categories))
                 }
-            },
-            'processing_info': {
-                'mfcc_shape': list(mfcc_features.shape),
-                'preprocessing_applied': [
-                    'mono_conversion',
-                    'sample_rate_standardization', 
-                    'amplitude_normalization',
-                    'noise_reduction',
-                    'silence_trimming'
-                ]
             }
         })
         
     except Exception as e:
         print(f"Prediction error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
 
-@app.route('/health')
-def health():
-    """Health check dengan info model"""
-    return jsonify({
-        'success': True,
-        'model_loaded': model is not None,
-        'tensorflow_version': tf.__version__,
-        'categories': categories,
-        'mfcc_config': {
-            'n_mfcc': N_MFCC,
-            'hop_length': HOP_LENGTH,
-            'n_fft': N_FFT,
-            'max_length': MAX_LENGTH
-        }
-    })
-
-# Load model saat startup
-print("🐔 Starting Enhanced Chicken Transformer API...")
+# Load model saat startup (untuk gunicorn)
+print("🐔 Starting Chicken Transformer API...")
 if not load_model():
     print("❌ Failed to load model")
     exit(1)
